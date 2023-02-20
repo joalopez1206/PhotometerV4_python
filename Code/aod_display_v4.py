@@ -129,20 +129,23 @@ def mfilter(stgo_data, name, cut = 0, cloud_filter = 0):
         lat = i['position'][0]
         lon = i['position'][1]
         alt = i['altitude']
+
         sp_frame = pv.solarposition.spa_python(pd_date, lat, lon, alt)
         zenith = sp_frame['zenith'][0]
-        r = pv.solarposition.nrel_earthsun_distance(pd_date)
-        m = pv.atmosphere.get_relative_airmass(zenith, model='young1994')
+
+        r = pv.solarposition.nrel_earthsun_distance(pd_date) #distancia tierra-sol
+        m = pv.atmosphere.get_relative_airmass(zenith, model='young1994') #masa de aire relativa
         i['r'] = r[0]
         i['m'] = m
         
-        h = 26-0.1*np.abs(lat)
+        h = 26-0.1*np.abs(lat) #apostaría que es la altura del nivel del mar aproximada en el lugar de la medición pensando en la tierra como una esfera obla
         
-        v =(r_earth+alt*1e-3)**2/(r_earth+h)**2
+        v =(r_earth+alt*1e-3)**2/(r_earth+h)**2 #corrección de la distancia tierra-sol
         
-        i['mu'] = 1/np.sqrt(1-v*np.sin(zenith*np.pi/180)**2)
+        i['mu'] = 1/np.sqrt(1-v*np.sin(zenith*np.pi/180)**2) #corrección de la masa de aire relativa TODO: revisar que sea correcto
     
     if cloud_filter != 0:
+        #filtro de nubes, se eliminan los datos que tienen una diferencia entre el valor maximo y minimo menor a 75
         for i in range(len(stgo_data)):
             delta = max(stgo_data[i][name])-min(stgo_data[i][name])
             if delta < 75:
@@ -151,6 +154,7 @@ def mfilter(stgo_data, name, cut = 0, cloud_filter = 0):
         i_cloud = range(len(stgo_data))
     
     for i in i_cloud:
+        #los datos que cumplen con los filtros se guardan en una lista
         pm1 = []
         for j in stgo_data[i][name]:
             if cloud_filter == 0:
@@ -419,7 +423,9 @@ def aero_useful_data_v2(aero_data):
     return np.array(t1), np.array(lamb)*1e-3, np.array(amgstrom), date, seconds, ozone, np.mean(latitude), np.mean(longitude), np.array(aero_air_mass) 
 
 def interpolate(m, pressure, altitude, airmass, amu, r, seconds, aero_seconds):
-    
+    """
+    rellena los datos faltantes de
+    """
     m1 = []
     m2 = []
     m3 = []
@@ -437,17 +443,18 @@ def interpolate(m, pressure, altitude, airmass, amu, r, seconds, aero_seconds):
             m2.append(i[0])
             m3.append(i[0])
     
-    im1 = np.interp(aero_seconds, seconds, m1, left=0, right=0)
+    im1 = np.interp(aero_seconds, seconds, m1, left=0, right=0) #interpola en aero_seconds, m1(secconds)
     im2 = np.interp(aero_seconds, seconds, m2, left=0, right=0)
     im3 = np.interp(aero_seconds, seconds, m3, left=0, right=0)
-    apressure = np.interp(seconds, np.delete(seconds, np.where(np.isnan(pressure))), np.delete(pressure, np.where(np.isnan(pressure))))  
+
+    apressure = np.interp(seconds, np.delete(seconds, np.where(np.isnan(pressure))), np.delete(pressure, np.where(np.isnan(pressure)))) #interpola en seconds, pressure(seconds)
     ipressure = np.interp(aero_seconds, seconds, apressure, left=0, right=0)
     ialtitude = np.interp(aero_seconds, seconds, altitude, left=0, right=0)
     iairmass = np.interp(aero_seconds, seconds, airmass, left=0, right=0)
     iamu = np.interp(aero_seconds, seconds, amu, left=0, right=0)
     ir = np.interp(aero_seconds, seconds, r, left=0, right=0)
     
-    delv = np.where(iairmass==0)
+    delv = np.where(iairmass==0) # 
     im1 = np.delete(im1,np.where(im1==0))
     im2 = np.delete(im2,np.where(im2==0))
     im3 = np.delete(im3,np.where(im3==0))
@@ -461,6 +468,10 @@ def interpolate(m, pressure, altitude, airmass, amu, r, seconds, aero_seconds):
     return im1, im2, im3, ipressure, ialtitude, iairmass, iamu, ir, delv
 
 def reyleigh(lmbd):
+    """
+    Retorna el valor de la seccion transversal de reyleigh para una longitud de onda dada
+    esto basado en 10.1364/AO.34.002765
+    """
     if lmbd <= 0.5:
         a = 6.50362e-3
         b = 3.55212
@@ -481,7 +492,7 @@ def amgstrom_interpolation(lamb2, amgs, tau):
 
 def rmse_calibration(x):
     """
-    x=[lambda, v0, eta]
+    x=[
     """
     return np.sqrt(np.sum(((amgstrom_interpolation(x[0],alpha,tau1))-((np.log(x[1]/(res**2))-np.log(v-4)-reyleigh(x[0])*(p/1013.25)*am-got_o3(ozo,x[2],ozo_model)*ozo_mu)/am))**2)/len(v))
 
@@ -489,10 +500,33 @@ def rmse_calibrationv3(x):
     """
     x=[lambda, v0, eta]
     """
-    return np.sqrt(np.sum(((amgstrom_interpolation(x[0],alpha,tau1))-((np.log(x[1]/(res**2))-np.log(v-4)-reyleigh(x[0])*(p/1013.25)*am)/am))**2)/len(v))
+    #calcula el error cuadratico medio de la calibración
+    # am: masa de aire
+    # p: presión atmosférica
+
+    return np.sqrt(np.sum(((amgstrom_interpolation(x[0],alpha,tau1))-((np.log(x[1]/(res**2))-np.log(v-4)-  reyleigh(x[0])*(p/1013.25)*am)/am))**2)/len(v))
 
 def stgo_aod(x,earth_sun_dis,vmeasure,press, air_mass, mu, ozone):
-    return ((np.log(x[1]/(earth_sun_dis**2))-np.log(vmeasure)-reyleigh(x[0])*(press/1013.25)*air_mass-got_o3(ozone,x[2],ozo_model)*mu)/air_mass)
+    """
+    Retorna el AOD calculado
+
+    Parametros:
+        x: Datos relativos a la calibración [lambda, v0, eta]
+        earth_sun_dis: Distancia Tierra-Sol
+        vmeasure: Medida de la radiación
+        press: Presión atmosférica
+        air_mass: Masa de aire
+        mu: constante relativa a la atenuacion de la radiación por el ozono
+        ozone: Concentración de ozono
+    Retorna:
+        AOD
+    
+    """
+    #formula (2) del paper 10.3390/rs13224585
+    # usa la propiedad log(x/y) = log(x) - log(y), por eso la resta de log(vmeasure) y log(x[1]/earth_sun_dis**2) xd
+
+
+    return ((np.log(x[1]/(earth_sun_dis**2))  -np.log(vmeasure)-  reyleigh(x[0])*(press/1013.25)*air_mass  -  got_o3(ozone,x[2],ozo_model)*mu)/air_mass)
 
 def stgo_aodv3(x,earth_sun_dis,vmeasure,press, air_mass):
     return ((np.log(x[1]/(earth_sun_dis**2))-np.log(vmeasure)-reyleigh(x[0])*(press/1013.25)*air_mass)/air_mass)
@@ -569,13 +603,10 @@ if __name__ == "__main__":
     
     with open('Code/../../Calibration/'+ stgo_unit +'.json', 'r') as file:
         json_file = json.load(file)
-        #r_struc = np.array(json_file)
         print(stgo_unit)
         
-        #if True:
         lb = 0.35
         ub = 0.75
-        
         x1 = np.array(json_file['x1'])
         d1 = np.array(json_file['date1'])
         x2 = np.array(json_file['x2'])
@@ -585,26 +616,29 @@ if __name__ == "__main__":
         x4 = np.array(json_file['x4'])
         d4 = np.array(json_file['date4'])
         
-        if len(x1) != 0:
-            x10 = x1[:,0]
+        if len(x1) != 0: #sensor 1 calibration
+            x10 = x1[:,0] # 
             x11 = x1[:,1]
             x12 = x1[:,2]
             
             x1fl = x10 > lb
             x1fu = x10 < ub
+
             x1f = np.logical_and(x1fl,x1fu)
-            chk1 = len(x10[x1f])
+
+            chk1 = len(x10[x1f]) #Cantidad de datos dentro del rango de calibracion
                                 
             print('x1')
             print(chk1/8)
             if chk1 != 0:
+                #Datos estadisticos
                 x10m = np.median(x10[x1f])
                 x10a = np.mean(x10[x1f])
                 x11m = np.median(x11[x1f])
                 x11a = np.mean(x11[x1f])
                 x12m = np.median(x12[x1f])
                 x12a = np.mean(x12[x1f])
-                
+                #vector de medianas y promedios
                 v11 =[x10m, x11m, x12m]
                 v12 =[x10a, x11a, x12a]
                 
@@ -734,7 +768,7 @@ if __name__ == "__main__":
         else:
             chk4 = 0
             print(stgo_unit +' Sensor 4 no tiene datos')
- 
+    #Calcula
         with open('Code/../../Out/CV/'+ stgo_unit +'.csv', 'w', newline = '') as csvfile:
             csvwriter = csv.writer(csvfile)
             
@@ -801,7 +835,7 @@ if __name__ == "__main__":
                 csvwriter.writerow(['Selected constansts Sensor 4']) 
                 csvwriter.writerow(v41)
                 csvwriter.writerow(v42)
-                
+    #######Hasta acá relacionado con la calibración
     datei = dt.datetime(2020, 1, 1)
     
     rmse11 =[]
@@ -826,7 +860,7 @@ if __name__ == "__main__":
     amgstromv42 = []
     aamgstrom = []
     
-    while datei != dt.datetime(2021, 1, 1):
+    while datei != dt.datetime(2021, 1, 1): #hasta el 1 de enero del 2021 ?? 
  
         day = datei.day
         month = datei.month
